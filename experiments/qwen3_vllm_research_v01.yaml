@@ -1,0 +1,151 @@
+name: qwen3-vllm-research-v01
+seed: 42
+output_dir: ../outputs
+metadata:
+  purpose: optional vLLM backend on the fixed 64-case research search split
+  benchmark_manifest: data/research_v01_manifest.json
+  source_pool: references/adapters/qwen3-8b/pool_v0.1.yaml
+
+model:
+  backend: vllm
+  name_or_path: ../../models/Qwen3-8B
+  base_model_id: Qwen/Qwen3-8B
+  dtype: bfloat16
+  device_map: auto
+  generation:
+    max_new_tokens: 256
+    temperature: 0.0
+    enable_thinking: false
+    seed: 42
+  options:
+    fusion_algebra: exact_delta
+    generation_kwargs:
+      repetition_penalty: 1.05
+    vllm:
+      lora_transport: memory
+      engine_mode: v1
+      tensor_parallel_size: 1
+      source_adapter_device: cuda
+      max_model_len: 8192
+      # The evaluator submits at most one 8-case topology-stage batch. A fixed
+      # cache avoids consuming all otherwise-free VRAM on GPUs that also host
+      # small external allocations. 16 GiB still covers the 8 x 8192-token
+      # theoretical concurrency bound with substantial margin.
+      kv_cache_memory_bytes: 17179869184
+      max_lora_rank: 256
+      max_loras: 1
+      max_cpu_loras: 12
+      enable_prefix_caching: true
+
+runtime:
+  mode: multi_gpu
+  gpu_ids: [0, 1, 2, 3, 4, 5]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 3600
+  max_retries: 1
+  cpu_threads_per_worker: 4
+  worker_env:
+    TOKENIZERS_PARALLELISM: "false"
+
+adapters:
+  - &common_adapter
+    name: coder_grpo
+    path: ../references/adapters/qwen3-8b/metadata/coder_grpo
+    base_model: Qwen/Qwen3-8B
+    rank: 32
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    metadata:
+      skill: code
+      role_admission: neutral_control
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: qasper_rag
+    path: ../references/adapters/qwen3-8b/metadata/qasper_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: narrativeqa_rag
+    path: ../references/adapters/qwen3-8b/metadata/narrativeqa_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: robot_planner
+    path: ../references/adapters/qwen3-8b/metadata/robot_planner
+    rank: 32
+    metadata:
+      skill: planning
+      role_admission: solver_and_critic_positive
+      license_audited: true
+      data_audited: false
+      known_risk: pre-audit training-recipe divergence reported by author
+
+  - <<: *common_adapter
+    name: platformio
+    path: ../references/adapters/qwen3-8b/metadata/platformio
+    rank: 16
+    metadata:
+      skill: code_tool
+      role_admission: solver_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: knapsack_runtime
+    path: ../references/adapters/qwen3-8b/metadata/knapsack_runtime
+    rank: 64
+    metadata:
+      skill: agent_runtime
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Analyze the task and produce a concise, executable plan.
+  - name: solver
+    role: solver
+    system_prompt: Solve the task using the upstream plan. Be precise.
+  - name: critic
+    role: critic and final answerer
+    system_prompt: Check the proposed solution, repair errors, and return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+    - [solver, critic]
+  output_agent: critic
+
+benchmark:
+  kind: jsonl
+  path: ../data/research_v01_search.jsonl
+  input_field: input
+  target_field: target
+  group_field: group
+  id_field: id
+  options:
+    scorer: exact_match
+    scorer_field: scorer
+    inference_batch_size: 8
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: worst_group_quality
+    direction: maximize
+  - metric: fusion_rank_proxy
+    direction: minimize

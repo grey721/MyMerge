@@ -1,0 +1,3 @@
+{"id":"mock-1","input":"Return [expected: 42]","target":"42","group":"a"}
+{"id":"mock-2","input":"Return [expected: blue]","target":"blue","group":"b"}
+

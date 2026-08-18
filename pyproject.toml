@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentmerge"
+version = "0.1.0"
+description = "Multi-objective evolutionary search for role-specific LoRA mixtures in multi-agent systems."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "PyYAML>=5.4",
+]
+
+[project.optional-dependencies]
+peft = [
+  "torch>=2.1",
+  "transformers>=4.51,<5",
+  "peft>=0.19,<0.20",
+  "accelerate>=1.6",
+]
+vllm = [
+  "vllm>=0.10,<0.11",
+  "transformers>=4.55.2,<5",
+  "safetensors>=0.4",
+  "packaging>=23",
+]
+test = [
+  "pytest>=7",
+]
+
+[project.scripts]
+agentmerge = "agentmerge.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

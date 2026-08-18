@@ -1,0 +1,144 @@
+name: qwen3-pilot-v01
+seed: 42
+output_dir: ../outputs
+metadata:
+  purpose: real-backend multi-objective pilot; not final paper evaluation
+  source_pool: references/adapters/qwen3-8b/pool_v0.1.yaml
+  admission_report: outputs/qwen3-pool-v01-admission-one-hot-admission-20260811T064023Z/admission_results.json
+  selection_note: reasoning_gen and toolflow moved to reserve after role-wise admission
+
+model:
+  backend: peft
+  name_or_path: ../../models/Qwen3-8B
+  base_model_id: Qwen/Qwen3-8B
+  dtype: bfloat16
+  device_map: auto
+  # Fusion is candidate-scoped on-demand materialization. Source adapters stay
+  # resident; temporary Agent mixtures are released after each candidate.
+  generation:
+    max_new_tokens: 256
+    temperature: 0.0
+    enable_thinking: false
+    seed: 42
+  options:
+    fusion_algebra: exact_delta
+    model_kwargs:
+      low_cpu_mem_usage: true
+      local_files_only: true
+    tokenizer_kwargs:
+      local_files_only: true
+    generation_kwargs:
+      repetition_penalty: 1.05
+
+runtime:
+  mode: multi_gpu
+  gpu_ids: [1, 2, 4, 5]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 3600
+  max_retries: 1
+  cpu_threads_per_worker: 4
+  worker_env:
+    TOKENIZERS_PARALLELISM: "false"
+
+adapters:
+  - &common_adapter
+    name: coder_grpo
+    path: ../references/adapters/qwen3-8b/metadata/coder_grpo
+    base_model: Qwen/Qwen3-8B
+    rank: 32
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    metadata:
+      skill: code
+      role_admission: neutral_control
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: qasper_rag
+    path: ../references/adapters/qwen3-8b/metadata/qasper_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: narrativeqa_rag
+    path: ../references/adapters/qwen3-8b/metadata/narrativeqa_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: robot_planner
+    path: ../references/adapters/qwen3-8b/metadata/robot_planner
+    rank: 32
+    metadata:
+      skill: planning
+      role_admission: solver_and_critic_positive
+      license_audited: true
+      data_audited: false
+      known_risk: pre-audit training-recipe divergence reported by author
+
+  - <<: *common_adapter
+    name: platformio
+    path: ../references/adapters/qwen3-8b/metadata/platformio
+    rank: 16
+    metadata:
+      skill: code_tool
+      role_admission: solver_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: knapsack_runtime
+    path: ../references/adapters/qwen3-8b/metadata/knapsack_runtime
+    rank: 64
+    metadata:
+      skill: agent_runtime
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Analyze the task and produce a concise, executable plan.
+  - name: solver
+    role: solver
+    system_prompt: Solve the task using the upstream plan. Be precise.
+  - name: critic
+    role: critic and final answerer
+    system_prompt: Check the proposed solution, repair errors, and return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+    - [solver, critic]
+  output_agent: critic
+
+benchmark:
+  kind: jsonl
+  path: ../data/admission_v01.jsonl
+  input_field: input
+  target_field: target
+  group_field: group
+  id_field: id
+  options:
+    scorer: exact_match
+    scorer_field: scorer
+    inference_batch_size: 8
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: worst_group_quality
+    direction: maximize
+  - metric: fusion_rank_proxy
+    direction: minimize

@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+.venv/
+build/
+dist/
+*.egg-info/
+outputs/
+models/
+adapters/
+references/adapters/**/adapter_model.safetensors
+references/adapters/**/adapter_model.bin
+.conda/
+data/.cache/
+references/

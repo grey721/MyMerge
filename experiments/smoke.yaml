@@ -1,0 +1,67 @@
+name: smoke-nsga2
+seed: 42
+output_dir: ../outputs
+
+model:
+  backend: mock
+  name_or_path: Qwen/Qwen3-8B
+  generation:
+    max_new_tokens: 128
+    temperature: 0.0
+    enable_thinking: false
+
+adapters:
+  - name: math_a
+    path: example/math-a
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  - name: math_b
+    path: example/math-b
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  - name: code
+    path: example/code
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  - name: planning
+    path: example/planning
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  - name: critique
+    path: example/critique
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+agents:
+  - name: planner
+    role: task planner
+    system_prompt: Break the problem into verifiable steps.
+  - name: solver
+    role: problem solver
+    system_prompt: Solve the task using the upstream plan.
+  - name: critic
+    role: critic and final answerer
+    system_prompt: Check the candidate solution and return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+    - [solver, critic]
+  output_agent: critic
+
+benchmark:
+  kind: synthetic
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: robustness
+    direction: maximize
+  - metric: active_adapters
+    direction: minimize

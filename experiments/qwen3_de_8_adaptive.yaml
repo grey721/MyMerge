@@ -1,0 +1,161 @@
+name: qwen3-de-8-adaptive
+seed: 42
+output_dir: ../outputs
+metadata:
+  purpose: ordinary two-stage MOEA/D-DE with Pareto-observed adaptive pools
+  benchmark_manifest: data/research_v01_manifest.json
+  source_pool: references/adapters/qwen3-8b/pool_v0.1.yaml
+  pool_policy: all eight locally complete Qwen3-8B LoRA adapters
+
+model:
+  backend: peft
+  name_or_path: ../../models/Qwen3-8B
+  base_model_id: Qwen/Qwen3-8B
+  dtype: bfloat16
+  device_map: auto
+  generation:
+    max_new_tokens: 256
+    temperature: 0.0
+    enable_thinking: false
+    seed: 42
+  options:
+    fusion_algebra: exact_delta
+    model_kwargs:
+      low_cpu_mem_usage: true
+      local_files_only: true
+    tokenizer_kwargs:
+      local_files_only: true
+    generation_kwargs:
+      repetition_penalty: 1.05
+
+runtime:
+  mode: multi_gpu
+  gpu_ids: [0, 1, 2, 3, 4, 5]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 3600
+  max_retries: 1
+  cpu_threads_per_worker: 4
+  worker_env:
+    TOKENIZERS_PARALLELISM: "false"
+
+adapters:
+  - &common_adapter
+    name: reasoning_gen
+    path: ../references/adapters/qwen3-8b/metadata/reasoning_gen
+    base_model: Qwen/Qwen3-8B
+    rank: 32
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    metadata:
+      skill: reasoning
+      hub_id: GusPuffy/Reasoning-Gen-8B-Lora
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: coder_grpo
+    path: ../references/adapters/qwen3-8b/metadata/coder_grpo
+    metadata:
+      skill: code
+      hub_id: lorenzocazzador/coder-grpo-qwen3-8b
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: qasper_rag
+    path: ../references/adapters/qwen3-8b/metadata/qasper_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      hub_id: DinoStackAI/Qwen3-8b-lora-qasper
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: narrativeqa_rag
+    path: ../references/adapters/qwen3-8b/metadata/narrativeqa_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      hub_id: DinoStackAI/Qwen3-8b-lora-narrativeqa
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: toolflow
+    path: ../references/adapters/qwen3-8b/metadata/toolflow
+    rank: 16
+    metadata:
+      skill: tool_calling
+      hub_id: s4um1l/toolflow-qwen3-8b-utility-v3
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: robot_planner
+    path: ../references/adapters/qwen3-8b/metadata/robot_planner
+    rank: 32
+    metadata:
+      skill: planning
+      hub_id: EdwinS9/qwen3-8b-sdft-robot-planner
+      license_audited: true
+      data_audited: false
+      known_risk: pre-audit training-recipe divergence reported by author
+
+  - <<: *common_adapter
+    name: platformio
+    path: ../references/adapters/qwen3-8b/metadata/platformio
+    rank: 16
+    metadata:
+      skill: code_tool
+      hub_id: clemsail/ailiance-platformio-sft
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: knapsack_runtime
+    path: ../references/adapters/qwen3-8b/metadata/knapsack_runtime
+    rank: 64
+    metadata:
+      skill: agent_runtime
+      hub_id: TieuDaoChanNhan/qwen3-8b-stateless-knapsack-lora-seed1337
+      license_audited: true
+      data_audited: false
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Analyze the task and produce a concise, executable plan.
+  - name: solver
+    role: solver
+    system_prompt: Solve the task using the upstream plan. Be precise.
+  - name: critic
+    role: critic and final answerer
+    system_prompt: Check the proposed solution, repair errors, and return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+    - [solver, critic]
+  output_agent: critic
+
+benchmark:
+  kind: jsonl
+  path: ../data/research_v01_search.jsonl
+  input_field: input
+  target_field: target
+  group_field: group
+  id_field: id
+  options:
+    scorer: exact_match
+    scorer_field: scorer
+    inference_batch_size: 8
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: worst_group_quality
+    direction: maximize
+  - metric: fusion_rank_proxy
+    direction: minimize

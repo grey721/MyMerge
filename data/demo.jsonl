@@ -1,0 +1,5 @@
+{"id":"arith-1","input":"What is 17 + 25? Return only the number.","target":"42","group":"arithmetic"}
+{"id":"arith-2","input":"What is 9 * 8? Return only the number.","target":"72","group":"arithmetic"}
+{"id":"arith-3","input":"A box has 12 red and 15 blue balls. How many balls are there? Return only the number.","target":"27","group":"word_problem"}
+{"id":"arith-4","input":"If 48 items are divided equally among 6 people, how many does each receive? Return only the number.","target":"8","group":"word_problem"}
+

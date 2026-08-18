@@ -1,0 +1,137 @@
+# Replace every adapter path and audit its license/training data before use.
+name: qwen3-agent-adapter-search
+seed: 42
+output_dir: ../outputs
+
+model:
+  backend: peft
+  # Resolved relative to this YAML: /202422801010/models/Qwen3-8B
+  name_or_path: ../../models/Qwen3-8B
+  base_model_id: Qwen/Qwen3-8B
+  dtype: bfloat16
+  device_map: auto
+  # Fusion is fixed: lazily compile one temporary rank-sum adapter per distinct
+  # Agent mixture, reuse it for this candidate, then release it at candidate end.
+  generation:
+    max_new_tokens: 256
+    temperature: 0.0
+    enable_thinking: false
+    seed: 42
+  options:
+    fusion_algebra: exact_delta
+    model_kwargs:
+      low_cpu_mem_usage: true
+      local_files_only: true
+    tokenizer_kwargs:
+      local_files_only: true
+    generation_kwargs:
+      repetition_penalty: 1.05
+
+# One persistent Qwen3 replica is loaded on each listed physical GPU.
+# Use mode: local and gpu_ids: [] for single-process debugging.
+runtime:
+  mode: multi_gpu
+  gpu_ids: [0, 1, 2, 3, 4, 5]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 3600
+  max_retries: 1
+  cpu_threads_per_worker: 4
+  worker_env:
+    TOKENIZERS_PARALLELISM: "false"
+
+adapters:
+  - &adapter_defaults
+    name: math_1
+    path: REPLACE_WITH_QWEN3_8B_MATH_LORA
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+    metadata:
+      skill: math
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: math_2
+    path: REPLACE_WITH_QWEN3_8B_MATH_LORA_2
+  - <<: *adapter_defaults
+    name: code_1
+    path: REPLACE_WITH_QWEN3_8B_CODE_LORA
+    metadata:
+      skill: code
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: tool_1
+    path: REPLACE_WITH_QWEN3_8B_TOOL_LORA
+    metadata:
+      skill: tool
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: qa_1
+    path: REPLACE_WITH_QWEN3_8B_QA_LORA
+    metadata:
+      skill: qa
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: rag_1
+    path: REPLACE_WITH_QWEN3_8B_RAG_LORA
+    metadata:
+      skill: rag
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: planning_1
+    path: REPLACE_WITH_QWEN3_8B_PLANNING_LORA
+    metadata:
+      skill: planning
+      license_audited: false
+      data_audited: false
+  - <<: *adapter_defaults
+    name: instruction_1
+    path: REPLACE_WITH_QWEN3_8B_INSTRUCTION_LORA
+    metadata:
+      skill: general
+      license_audited: false
+      data_audited: false
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Produce a concise, executable plan for the task.
+  - name: solver
+    role: solver
+    system_prompt: Solve the task using the plan and show only necessary work.
+  - name: critic
+    role: critic
+    system_prompt: Check correctness, repair errors, and return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+    - [solver, critic]
+  output_agent: critic
+
+benchmark:
+  kind: jsonl
+  path: ../data/demo.jsonl
+  input_field: input
+  target_field: target
+  group_field: group
+  id_field: id
+  max_cases: 32
+  options:
+    scorer: numeric
+    # Cases are batched independently at every topology stage.
+    inference_batch_size: 8
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: worst_group_quality
+    direction: maximize
+  - metric: fusion_rank_proxy
+    direction: minimize

@@ -1,0 +1,161 @@
+name: qwen3-vllm-factor-linear-research-v03
+seed: 42
+output_dir: ../outputs
+metadata:
+  purpose: loop search on literature-aligned language, math, and code objectives with tool-use evaluation
+  benchmark_manifest: data/research_v03_manifest.json
+  source_pool: references/adapters/qwen3-8b/pool_v0.1.yaml
+
+model:
+  backend: vllm
+  name_or_path: ../../models/Qwen3-8B
+  base_model_id: Qwen/Qwen3-8B
+  dtype: bfloat16
+  device_map: auto
+  generation:
+    max_new_tokens: 512
+    temperature: 0.0
+    enable_thinking: false
+    seed: 42
+  options:
+    fusion_algebra: factor_linear
+    generation_kwargs:
+      repetition_penalty: 1.05
+    vllm:
+      lora_transport: memory
+      engine_mode: v1
+      tensor_parallel_size: 1
+      source_adapter_device: cuda
+      max_model_len: 8192
+      # KV cache is fixed below, so this value is only a conservative vLLM
+      # startup guard rather than the cache-allocation policy.
+      gpu_memory_utilization: 0.50
+      # On Qwen3-8B/vLLM 0.10.2 this provides 116,496 cache tokens. A batch of
+      # 12 full 8,192-token sequences needs 98,304, leaving 15.6% headroom.
+      kv_cache_memory_bytes: 17179869184
+      max_lora_rank: 256
+      max_loras: 1
+      max_cpu_loras: 12
+      enable_prefix_caching: true
+
+runtime:
+  mode: multi_gpu
+  gpu_ids: [0, 1, 2, 3, 4, 5]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 3600
+  max_retries: 1
+  cpu_threads_per_worker: 4
+  worker_env:
+    TOKENIZERS_PARALLELISM: "false"
+
+adapters:
+  - &common_adapter
+    name: coder_grpo
+    path: ../references/adapters/qwen3-8b/metadata/coder_grpo
+    base_model: Qwen/Qwen3-8B
+    rank: 32
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    metadata:
+      skill: code
+      role_admission: neutral_control
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: qasper_rag
+    path: ../references/adapters/qwen3-8b/metadata/qasper_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: narrativeqa_rag
+    path: ../references/adapters/qwen3-8b/metadata/narrativeqa_rag
+    rank: 16
+    metadata:
+      skill: qa_rag
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: robot_planner
+    path: ../references/adapters/qwen3-8b/metadata/robot_planner
+    rank: 32
+    metadata:
+      skill: planning
+      role_admission: solver_and_critic_positive
+      license_audited: true
+      data_audited: false
+      known_risk: pre-audit training-recipe divergence reported by author
+
+  - <<: *common_adapter
+    name: platformio
+    path: ../references/adapters/qwen3-8b/metadata/platformio
+    rank: 16
+    metadata:
+      skill: code_tool
+      role_admission: solver_positive
+      license_audited: true
+      data_audited: false
+
+  - <<: *common_adapter
+    name: knapsack_runtime
+    path: ../references/adapters/qwen3-8b/metadata/knapsack_runtime
+    rank: 64
+    metadata:
+      skill: agent_runtime
+      role_admission: critic_positive
+      license_audited: true
+      data_audited: false
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Select the next action. Return only Reason to request intermediate work, Finish when the answer is ready, or an exact tool name supplied by the task.
+    prompt_template: "Task:\n{task}\n\nShared scratchpad:\n{scratchpad}\n\nStep {step}: choose the next action only."
+  - name: arguments
+    role: action argument generator
+    system_prompt: Produce only the argument for the action selected in the latest scratchpad entry. For Reason, do the requested work; for Finish, return the candidate answer in the task's exact format.
+    prompt_template: "Task:\n{task}\n\nShared scratchpad:\n{scratchpad}\n\nStep {step}: return only the selected action's argument."
+  - name: final
+    role: verifier and final answerer
+    system_prompt: Verify the accumulated work and return only the answer in the task's exact requested format, without commentary.
+    prompt_template: "Task:\n{task}\n\nShared scratchpad:\n{scratchpad}\n\nReturn the final answer only."
+
+topology:
+  kind: tool_loop
+  loop_agents: [planner, arguments]
+  max_steps: 2
+  max_context_tokens: 7680
+  output_agent: final
+
+benchmark:
+  kind: jsonl
+  path: ../data/research_v03_search.jsonl
+  input_field: input
+  target_field: target
+  group_field: group
+  id_field: id
+  options:
+    scorer: exact_match
+    scorer_field: scorer
+    code_timeout_seconds: 3
+    inference_batch_size: 12
+    quality_domains:
+      language_reasoning: [nli_mnli, nli_qnli, nli_snli, nli_rte, nli_sick, nli_scitail]
+      mathematics: [math_gsm8k, math_math]
+      code: [code_humaneval, code_mbpp]
+      tool_use: [tool_bfcl]
+
+objectives:
+  - metric: domain_quality.language_reasoning
+    direction: maximize
+  - metric: domain_quality.mathematics
+    direction: maximize
+  - metric: domain_quality.code
+    direction: maximize

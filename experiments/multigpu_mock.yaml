@@ -1,0 +1,61 @@
+# Process-level scheduling smoke test; it does not load CUDA or a real model.
+name: multigpu-process-smoke
+seed: 42
+output_dir: ../outputs
+
+model:
+  backend: mock
+  name_or_path: Qwen/Qwen3-8B
+  generation:
+    max_new_tokens: 32
+    temperature: 0.0
+    enable_thinking: false
+
+runtime:
+  mode: multi_gpu
+  gpu_ids: [mock-gpu-0, mock-gpu-1]
+  start_method: spawn
+  preload_workers: true
+  evaluation_timeout_seconds: 30
+  max_retries: 0
+  cpu_threads_per_worker: 1
+
+adapters:
+  - name: reasoning
+    path: example/reasoning
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+  - name: planning
+    path: example/planning
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+  - name: critique
+    path: example/critique
+    base_model: Qwen/Qwen3-8B
+    rank: 16
+
+agents:
+  - name: planner
+    role: planner
+    system_prompt: Make a concise plan.
+  - name: solver
+    role: solver
+    system_prompt: Return the final answer.
+
+topology:
+  kind: fixed
+  edges:
+    - [planner, solver]
+  output_agent: solver
+
+benchmark:
+  kind: jsonl
+  path: ../data/mock_multigpu.jsonl
+  options:
+    scorer: exact_match
+
+objectives:
+  - metric: quality
+    direction: maximize
+  - metric: active_adapters
+    direction: minimize
